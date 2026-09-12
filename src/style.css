@@ -1,0 +1,12 @@
+:root { color-scheme: dark; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: #16191d; }
+* { box-sizing: border-box; }
+html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
+#stage { width: 100%; height: 100%; display: block; outline: none; touch-action: none; cursor: crosshair; }
+#stage:active { cursor: grabbing; }
+#gui { position: fixed; right: 16px; top: 16px; width: 280px; max-height: calc(100dvh - 32px); overflow: auto; scrollbar-width: thin; }
+#gui .tp-dfwv { width: 100%; }
+#gui .tp-rotv { --tp-base-background-color: hsla(220, 10%, 12%, .93); --tp-base-shadow-color: hsla(0,0%,0%,.12); --tp-button-background-color: hsl(80,25%,70%); --tp-button-background-color-hover: hsl(80,30%,80%); --tp-button-foreground-color: hsl(220,10%,14%); --tp-input-background-color: hsl(220,9%,22%); --tp-container-foreground-color: hsl(70,8%,79%); --tp-label-foreground-color: hsl(70,8%,70%); --tp-monitor-foreground-color: hsl(80,30%,72%); --tp-base-font-size: 11px; border-radius: 7px; }
+@media(max-width: 600px) { #gui { right: 8px; top: 8px; width: 240px; max-height: calc(100dvh - 16px); } }
+
+#gui .tp-lblv_l { width: 44%; }
+#gui .tp-lblv_v { width: 56%; }
