@@ -6,8 +6,9 @@ export const defaults = {
   shadows: true, shadowResolution: 2048, shadowSoftness: 2.5, shadowBias: .005,
   lightAzimuth: -35, lightElevation: 52, lightIntensity: 3.2, ambientStrength: .5,
   roughness: .38, metallic: 0, exposure: 1,
+  materialMix: true, glassShare: .3, chromeShare: .3, glassIOR: 1.5, glassTint: .12, softboxSize: 12,
   ao: true, aoRadius: .65, aoStrength: 1.3, aoQuality: 1, debugLighting: 0,
-  culling: true, pixelRatio: 1, color: 0, seed: 42,
+  culling: true, pixelRatio: 1, color: 3, seed: 42,
 };
 export const counts = { '10k':10000, '100k':100000, '200k':200000, '500k':500000, '1m':1000000, '2m':2000000 };
 export function layout(s) {

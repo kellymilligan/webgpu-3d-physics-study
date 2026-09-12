@@ -12,17 +12,13 @@ struct Varying {
   @location(1) @interpolate(flat) center: vec3f,
   @location(2) @interpolate(flat) radius: f32,
   @location(3) @interpolate(flat) color: vec3f,
+  @location(4) @interpolate(flat) kind:u32,
 }
 fn corner(i:u32)->vec2f {
   let corners=array<vec2f,6>(vec2f(-1,-1),vec2f(1,-1),vec2f(-1,1),vec2f(-1,1),vec2f(1,-1),vec2f(1,1));
   return corners[i];
 }
-fn colorFor(i:u32)->vec3f {
-  let palette=array<vec3f,8>(vec3f(.63,.74,.40),vec3f(.85,.64,.39),vec3f(.39,.60,.65),vec3f(.72,.76,.57),vec3f(.73,.42,.28),vec3f(.43,.54,.38),vec3f(.75,.72,.62),vec3f(.39,.45,.52));
-  if(camera.style.x>1.5){return vec3f(.62,.69,.77);}
-  if(camera.style.x>.5){return mix(vec3f(.17,.36,.47),vec3f(.63,.87,.82),f32((i*1664525u+1013904223u)%256u)/255.);}
-  return palette[(i*1664525u+1013904223u)%8u];
-}
+fn colorFor(i:u32)->vec3f {return paletteColor(i,camera.style.x);}
 @vertex fn sphereVertex(@builtin(vertex_index) v:u32,@builtin(instance_index) i:u32)->Varying {
   var particleID=i;
   if(camera.style.z>.5 && camera.style.y<.5){particleID=visibleIDs[i];}
@@ -33,7 +29,7 @@ fn colorFor(i:u32)->vec3f {
   // Expand the billboard for perspective; fragment ray intersection determines its exact silhouette.
   let expanded=p.w*length(center)/max(.001,-center.z-p.w);
   let position=camera.projection*vec4f(center+vec3f(uv*expanded,0),1);
-  return Varying(position,uv,center,p.w,color);
+  return Varying(position,uv,center,p.w,color,materialKind(particleID,camera.style.w));
 }
 struct Fragment { @location(0) color:vec4f, @builtin(frag_depth) depth:f32 }
 @fragment fn sphereFragment(in:Varying)->Fragment {
@@ -86,7 +82,7 @@ struct GBuffer { @location(0) albedo:vec4f, @location(1) normal:vec4f, @builtin(
   if(h<0.){discard;}
   let hit=ray*(b-sqrt(h));let normal=normalize(hit-in.center);
   let clip=camera.projection*vec4f(hit,1);
-  return GBuffer(vec4f(in.color,1),vec4f(normal,in.radius),clip.z/clip.w);
+  return GBuffer(vec4f(in.color,f32(in.kind+1u)*.2),vec4f(normal,in.radius),clip.z/clip.w);
 }
 struct GroundBuffer { @location(0) albedo:vec4f, @location(1) normal:vec4f }
 @fragment fn groundGeometry(in:GroundVarying)->GroundBuffer {

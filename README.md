@@ -1,6 +1,6 @@
 # Sphere Lab
 
-A standalone WebAssembly + WebGPU sphere dynamics experiment. This is a new app with its own dependencies, entry point, shaders and development server; it does not import anything from Blur Study.
+A standalone WebAssembly + WebGPU sphere dynamics experiment with a tiled, physically based still renderer. This is a new app with its own dependencies, entry point, shaders and development server; it does not import anything from Blur Study.
 
 ## Run
 
@@ -18,6 +18,8 @@ npm test            # WASM layout / radius / mass checks
 npm run test:gpu    # real browser physics and scale checks; start the server first
 npm run test:culling # direct GPU image comparisons and visibility benchmarks
 npm run test:lighting # lighting toggles, shadow geometry, quality and 1m/2m checks
+npm run test:export   # path tracing, tile equivalence, material transport, save/cancel and 1m/2m
+npm run test:print    # full 12000 x 9000 streaming export at draft sampling
 ```
 
 `test:gpu` uses Playwright's installed Chromium or Google Chrome on macOS. Set `CHROME_PATH` for another executable, and `TEST_URL` to test a different server. Results and screenshots go into ignored `test-results/`.
@@ -115,3 +117,32 @@ With all lighting enabled at defaults, frozen dense-lattice render-only measurem
 The Performance folder reports total GPU frame time and render/cull time, plus individual shadow, AO and lighting **spans**. On GPUs that overlap stages of separate passes, those per-pass timestamp spans overlap too and must not be summed. Total render time is measured across the complete rendering interval instead.
 
 References: [GTAO derivation and filtering](https://www.activision.com/cdn/research/PracticalRealtimeStrategiesTRfinal.pdf), [Filament's physically based shading equations](https://google.github.io/filament/main/filament.html), and [percentage-closer shadow filtering](https://developer.nvidia.com/gpugems/gpugems/part-ii-lighting-and-shadows/chapter-11-shadow-map-antialiasing).
+
+
+## Compose and render a print
+
+1. Compose in the realtime view using the existing orbit, zoom and stir controls. Mixed materials are on by default: 30% glass, 30% chrome and 40% matte ceramic. Material assignment is deterministic per original sphere ID, so it survives simulation, visibility culling and export. Glass/chrome shares are normalized if their sum exceeds 1; the remainder is matte. Turn off Mixed materials to use the uniform roughness/metallic controls.
+2. Open **Render still**. **Path-traced preview** freezes the current simulation and renders the composition at up to 1200 pixels on its long edge, at 64 samples per pixel. Check transparent glass, neighboring reflections, indirect lighting and the softbox here. The realtime glass appearance is an approximation; it does not show objects behind the glass or trace refraction.
+3. Set the long edge in inches and DPI. **40 inches at 300 DPI is 12,000 pixels** on the long edge. The image retains the viewport's aspect ratio; a 4:3 composition produces 12,000 × 9,000 pixels, or 40 × 30 inches. The GUI reports the exact pixel dimensions. The output includes the complete camera frame, excluding the GUI and stirring cursor.
+4. Choose samples and maximum bounces. The default is 1024 samples/pixel and 16 bounces; 4096+ samples and 24–32 bounces are useful starting points for demanding glass scenes. These are quality controls, not a guarantee of noise-free output. Increasing bounce depth matters when a ray passes through many glass spheres. Softbox diameter changes the area-light size; intensity is normalized to keep approximately the same central illumination.
+5. **Render & save 16-bit PNG** opens a destination picker where supported. The exporter streams to that file without allocating a full-resolution GPU texture or keeping the entire uncompressed image in memory. Other browsers use a download after completion and retain compressed chunks in RAM. Progress, sample count and a rolling time estimate remain in the GUI. Cancel stops after the current GPU sample and aborts the unfinished file. Return to scene restores the interactive view; completed exports leave the simulation paused.
+
+The PNG contains 16-bit RGB, an sRGB declaration and DPI metadata. Radiance is accumulated in 32-bit floating point, exposed, tone-mapped and converted to sRGB before quantization. This is a print-oriented, display-referred image, not a raw HDR/EXR file. Printer/paper profile conversion belongs in the print application's color-managed workflow. Up to 24,000 pixels on the long edge is supported by the tiling path; choose a valid combination of inches and DPI.
+
+### Still renderer implementation
+
+`src/export/path-tracer.js` runs a separate WebGPU compute pipeline against a frozen snapshot; WASM and realtime physics are unchanged. A Worker builds a balanced BVH over Morton-sorted sphere centers. Each leaf contains at most eight analytic spheres, and IDs remain separate from spatial order. All spheres remain in the hierarchy, including camera-hidden bodies needed for reflections, refraction and indirect shadows. At 2m spheres, positions, IDs and BVH nodes add roughly 53.4 MiB of GPU storage beyond the live simulation.
+
+`src/shaders/path-trace.wgsl` implements multiple-bounce light transport with analytic sphere intersections, an area-light disk, environment illumination, direct-light sampling, BSDF sampling with multiple importance sampling, and Russian roulette. Matte/opaque materials use diffuse plus GGX reflection, chrome uses a near-smooth metallic GGX response, and smooth glass uses Fresnel reflection/refraction, total internal reflection and Beer–Lambert absorption. The glass IOR and tint are adjustable. The floor participates in light transport; the other five container walls remain invisible.
+
+The integrator has a finite bounce limit and uses RGB transport. It does not implement spectral dispersion, a specialized caustic solver or denoising. Difficult caustics and sharp reflected highlights can remain noisy and require more samples. It assumes non-overlapping dielectric interiors; residual overlaps from the approximate realtime solver can produce imperfect glass boundaries. No screen-space AO or shadow-map approximation is baked into the traced output.
+
+Tiles are 128 × 128 by default, with one sample per GPU dispatch. Pixel/sample seeds are independent of tile dimensions, and sampling occurs at the final output resolution with subpixel jitter. Only the tile's HDR accumulation and a full-width output strip are resident. `src/export/png.js` applies PNG Sub filtering and streaming deflate compression, writing 16-bit RGB IDAT chunks and pHYs resolution metadata. Rendering yields between GPU samples so cancellation remains responsive. A downscaled preview fills in as tiles complete.
+
+### Export validation and timing
+
+`npm test` includes deterministic seed checks, BVH bounds/ID coverage, BVH ray traversal against brute force, print-dimension calculations and a lossless 16-bit PNG round trip at 12,000 pixels wide. `test:export` covers mixed-material transport, glass IOR changes, byte-identical image pixels with different tile sizes, unchanged physics, cancellation, write failures, actual browser downloads and renders containing 1m/2m bodies. `test:print` writes a complete 12,000 × 9,000 image to temporary browser storage at one sample, checks the dimensions/bit depth and removes it afterward; it validates output scale rather than finished-image quality.
+
+A local 800 × 600, 512-sample, 24-bounce still of a settled 10k stack took about 49 seconds on the Apple GPU used for development. Print-resolution output with high sample counts can take hours. Cost depends strongly on material mix, scene arrangement, bounce count, output pixels and GPU. No full 12k high-sample render-time guarantee is made; use the path-traced preview and the live estimate to judge a composition's cost.
+
+References: [BVHs and Morton ordering](https://www.pbr-book.org/4ed/Primitives_and_Intersection_Acceleration/Bounding_Volume_Hierarchies), [dielectric reflection and transmission](https://www.pbr-book.org/4ed/Reflection_Models/Dielectric_BSDF), and [PNG format and resolution metadata](https://www.w3.org/TR/png-3/).

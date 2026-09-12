@@ -2,6 +2,7 @@ import { Lighting } from './lighting.js';
 import { Visibility } from './culling.js';
 import physicsCode from './shaders/physics.wgsl?raw';
 import renderCode from './shaders/render.wgsl?raw';
+import materialCode from './shaders/materials.wgsl?raw';
 
 export class GPUWorld {
   static async create(canvas,onError) {
@@ -47,7 +48,7 @@ export class GPUWorld {
     const layout=d.createPipelineLayout({bindGroupLayouts:[this.computeLayout]});
     this.pipelines={};
     for(const entryPoint of ['integrate','buildGrid','solve'])this.pipelines[entryPoint]=await d.createComputePipelineAsync({layout,compute:{module,entryPoint}});
-    const renderModule=await this.module(renderCode,'render');
+    const renderModule=await this.module(materialCode+renderCode,'render');
     const renderLayout=d.createPipelineLayout({bindGroupLayouts:[this.renderLayout]});
     const common={layout:renderLayout,primitive:{topology:'triangle-list'},depthStencil:{format:'depth32float',depthWriteEnabled:true,depthCompare:'less'}};
     this.spheres=await d.createRenderPipelineAsync({...common,vertex:{module:renderModule,entryPoint:'sphereVertex'},fragment:{module:renderModule,entryPoint:'sphereGeometry',targets:[{format:'rgba8unorm'},{format:'rgba16float'}]}});

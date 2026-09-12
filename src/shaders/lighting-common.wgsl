@@ -9,9 +9,9 @@ struct Lighting {
   direction: vec4f, // surface-to-light direction, intensity
   ambient: vec4f, // ambient strength, roughness, metallic, exposure
   shadow: vec4f, // enabled, filter radius in texels, receiver bias in world units, resolution
-  occlusion: vec4f, // enabled, radius in world units, strength, unused
+  occlusion: vec4f, // enabled, radius in world units, strength, glass tint
   viewport: vec4f, // full width/height, AO width/height
-  options: vec4f, // AO directions, steps, debug view, unused
+  options: vec4f, // AO directions, steps, debug view, glass IOR
 }
 @group(0) @binding(0) var<uniform> camera: Camera;
 @group(0) @binding(1) var<uniform> light: Lighting;

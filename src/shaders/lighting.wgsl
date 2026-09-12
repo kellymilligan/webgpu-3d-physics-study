@@ -51,6 +51,7 @@ fn aoAt(pixel:vec2i,p:vec3f,n:vec3f)->f32 {
   let visibility=select(1.,sum/max(weights,.00001),weights>.00001);
   return pow(clamp(visibility,0.,1.),light.occlusion.z);
 }
+fn schlickGlass(c:f32)->f32 {let f0=pow((light.options.w-1.)/(light.options.w+1.),2.);return f0+(1.-f0)*pow(1.-c,5.);}
 fn fresnel(f0:vec3f,cosine:f32)->vec3f {return f0+(1.-f0)*pow(1.-cosine,5.);}
 fn srgb(c:vec3f)->vec3f {return select(c*12.92,1.055*pow(c,vec3f(1./2.4))-.055,c>vec3f(.0031308));}
 @fragment fn fragment(@builtin(position) screen:vec4f)->@location(0) vec4f {
@@ -58,11 +59,14 @@ fn srgb(c:vec3f)->vec3f {return select(c*12.92,1.055*pow(c,vec3f(1./2.4))-.055,c
   if(depth>=1.){return vec4f(.073,.082,.095,1);}
   let p=viewPosition(screen.xy,depth);let nv=normalize(textureLoad(geometryNormal,pixel,0).xyz);
   let world=(camera.inverse*vec4f(p,1)).xyz;let n=normalize((camera.inverse*vec4f(nv,0)).xyz);
-  let albedo=textureLoad(geometryAlbedo,pixel,0);let base=albedo.rgb;
-  let roughness=select(.85,light.ambient.y,albedo.a>.5);let metallic=select(0.,light.ambient.z,albedo.a>.5);
+  let albedo=textureLoad(geometryAlbedo,pixel,0);var base=albedo.rgb;
+  let kind=i32(round(albedo.a*5.))-1;let sphere=kind>=0;
+  var roughness=select(.85,light.ambient.y,sphere);var metallic=select(0.,light.ambient.z,sphere);
+  if(kind==1){roughness=.82;metallic=0.;}if(kind==2){base=vec3f(.93,.94,.96);roughness=.055;metallic=1.;}
+  if(kind==3){roughness=.06;metallic=0.;}
   let v=normalize(camera.eye.xyz-world);let l=light.direction.xyz;let h=normalize(v+l);
   let noV=max(.001,dot(n,v));let noL=max(0.,dot(n,l));let noH=max(0.,dot(n,h));let voH=max(0.,dot(v,h));
-  let f0=mix(vec3f(.04),base,metallic);let f=fresnel(f0,voH);
+  var f0=mix(vec3f(.04),base,metallic);if(kind==3){f0=vec3f(schlickGlass(1.));}let f=fresnel(f0,voH);
   let alpha=roughness*roughness;let a2=alpha*alpha;
   let denominator=noH*noH*(a2-1.)+1.;
   let distribution=a2/max(.0000001,3.14159265*denominator*denominator);
@@ -80,6 +84,13 @@ fn srgb(c:vec3f)->vec3f {return select(c*12.92,1.055*pow(c,vec3f(1./2.4))-.055,c
   let ambientF=fresnel(f0,noV);
   let indirect=((1.-ambientF)*(1.-metallic)*base*ambientColor+environment*ambientF*(1.-roughness*.45))*light.ambient.x*ao;
   var color=(direct+indirect)*light.ambient.w;
+  if(kind==3){
+    // Fast glass appearance for composition; the still renderer traces actual
+    // transmission through the complete scene, including hidden spheres.
+    let fGlass=schlickGlass(noV);
+    let transmitted=mix(vec3f(.12,.14,.16),vec3f(.55,.63,.72),clamp(-n.y*.5+.5,0.,1.))*mix(vec3f(1),base,light.occlusion.w);
+    color=(environment*fGlass+transmitted*(1.-fGlass)*light.ambient.x+specular*light.direction.w*noL*shadow)*light.ambient.w;
+  }
   color=clamp((color*(2.51*color+.03))/(color*(2.43*color+.59)+.14),vec3f(0),vec3f(1));
   if(light.options.z>.5&&light.options.z<1.5){return vec4f(vec3f(ao),1);}
   if(light.options.z>1.5&&light.options.z<2.5){return vec4f(vec3f(shadow),1);}

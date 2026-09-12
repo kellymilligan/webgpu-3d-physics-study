@@ -10,3 +10,7 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 
 #gui .tp-lblv_l { width: 44%; }
 #gui .tp-lblv_v { width: 56%; }
+
+#still-preview { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #121518; z-index: 1; }
+#still-preview[hidden] { display: none; }
+#gui { z-index: 2; }

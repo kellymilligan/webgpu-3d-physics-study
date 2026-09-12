@@ -68,9 +68,9 @@ export class Lighting {
     this.data.set([...direction.toArray(),s.lightIntensity],48);
     this.data.set([s.ambientStrength,s.roughness,s.metallic,s.exposure],52);
     this.data.set([s.shadows?1:0,s.shadowSoftness,s.shadowBias,s.shadowResolution],56);
-    this.data.set([s.ao?1:0,s.aoRadius,s.aoStrength,0],60);
+    this.data.set([s.ao?1:0,s.aoRadius,s.aoStrength,s.glassTint],60);
     this.data.set([this.world.canvas.width,this.world.canvas.height,this.aoWidth,this.aoHeight],64);
-    const quality=[[2,4],[4,4],[6,6]][s.aoQuality];this.data.set([...quality,s.debugLighting,0],68);
+    const quality=[[2,4],[4,4],[6,6]][s.aoQuality];this.data.set([...quality,s.debugLighting,s.glassIOR],68);
     this.device.queue.writeBuffer(this.uniform,0,this.data);
   }
   encodeShadow(encoder,timed) {
