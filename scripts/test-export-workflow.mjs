@@ -23,7 +23,7 @@ try {
  });console.log('Tile boundaries',tiled);assert.ok(tiled.identical);assert.deepEqual(tiled.errors,[]);
  const materials=await page.evaluate(async()=>{
    const s=sphereLab.settings,o={width:128,height:96,samples:64,bounces:24};
-   s.materialMix=true;s.glassShare=1;s.chromeShare=0;s.glassIOR=1.5;const glass=(await captureRender(o)).pixels;
+   s.color=3;s.materialMix=true;s.glassShare=1;s.chromeShare=0;s.glassIOR=1.5;const glass=(await captureRender(o)).pixels;
    s.glassIOR=2;const refracted=(await captureRender(o)).pixels;
    s.glassShare=0;s.chromeShare=1;const chrome=(await captureRender(o)).pixels;
    s.chromeShare=0;const matte=(await captureRender(o)).pixels;
@@ -51,7 +51,7 @@ try {
  console.log('PNG download',download.suggestedFilename());
  for(const count of [1000000,2000000]){
   const stress=await page.evaluate(async count=>{
-   const l=sphereLab;Object.assign(l.settings,{count,materialMix:true,glassShare:.3,chromeShare:.3,paused:true});l.fitRadius();await l.reset();
+   const l=sphereLab;Object.assign(l.settings,{count,color:4,materialMix:true,glassShare:.3,chromeShare:.3,paused:true});l.fitRadius();await l.reset();
    const before=await l.snapshot(128);const r=await captureRender({width:64,height:48,samples:2,bounces:12});const after=await l.snapshot(128);
    return {...r.result,unchanged:before.every((v,i)=>v===after[i]),errors:l.errors};
   },count);console.log('Scale',stress);assert.equal(stress.count,count);assert.ok(stress.unchanged);assert.deepEqual(stress.errors,[]);

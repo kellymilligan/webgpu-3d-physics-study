@@ -11,7 +11,7 @@ await mkdir('test-results',{recursive:true});
 try {
  await page.goto('http://127.0.0.1:5180');await page.waitForFunction(()=>window.sphereLab,{timeout:30000});
  console.log('Startup',await page.evaluate(()=>({stats:sphereLab.stats,errors:sphereLab.errors})));assert.deepEqual(await page.evaluate(()=>sphereLab.errors),[]);
- await page.evaluate(async()=>{const l=sphereLab;Object.assign(l.settings,{paused:true,count:10000,variation:0,materialMix:false});l.fitRadius();await l.reset();await l.step(420);});
+ await page.evaluate(async()=>{const l=sphereLab;Object.assign(l.settings,{paused:true,count:10000,variation:0,materialMix:false,color:0});l.fitRadius();await l.reset();await l.step(420);});
  await page.screenshot({path:'test-results/lighting-stack.png'});
  const effects=await page.evaluate(async()=>{
   const l=sphereLab,s=l.settings;const baseline=await l.snapshot();

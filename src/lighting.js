@@ -1,24 +1,29 @@
 import { Matrix4, OrthographicCamera, Vector3, WebGPUCoordinateSystem } from 'three';
-import commonCode from './shaders/lighting-common.wgsl?raw';
+import materialCode from './shaders/materials.wgsl?raw';
+import commonSource from './shaders/lighting-common.wgsl?raw';
+import studioCode from './shaders/studio.wgsl?raw';
+import shapeCode from './shaders/shapes.wgsl?raw';
+import {studioLights} from './studio.js';
 import shadowCode from './shaders/shadow.wgsl?raw';
 import gtaoCode from './shaders/gtao.wgsl?raw';
 import filterCode from './shaders/ao-filter.wgsl?raw';
 import lightingCode from './shaders/lighting.wgsl?raw';
+const commonCode=studioCode+commonSource;
 
 export class Lighting {
   constructor(world) {
-    this.world=world;this.device=world.device;this.data=new Float32Array(72);
+    this.world=world;this.device=world.device;this.data=new Float32Array(156);
     this.inverseProjection=new Matrix4();this.lightCamera=new OrthographicCamera();
     this.lightCamera.coordinateSystem=WebGPUCoordinateSystem;
   }
   async initialize() {
     const d=this.device,w=this.world;
-    this.uniform=w.buffer(288,GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST,'lighting parameters');
-    const shadowModule=await w.module(shadowCode,'sphere shadow map');
+    this.uniform=w.buffer(624,GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST,'lighting parameters');
+    const shadowModule=await w.module(shapeCode+shadowCode,'body shadow map');
     this.shadowPipeline=await d.createRenderPipelineAsync({layout:'auto',vertex:{module:shadowModule,entryPoint:'vertex'},fragment:{module:shadowModule,entryPoint:'fragment',targets:[]},primitive:{topology:'triangle-list'},depthStencil:{format:'depth32float',depthWriteEnabled:true,depthCompare:'less'}});
     this.aoPipeline=await d.createComputePipelineAsync({layout:'auto',compute:{module:await w.module(commonCode+gtaoCode,'GTAO'),entryPoint:'gtao'}});
     this.filterPipeline=await d.createComputePipelineAsync({layout:'auto',compute:{module:await w.module(commonCode+filterCode,'AO bilateral filter'),entryPoint:'filterAO'}});
-    const lightingModule=await w.module(commonCode+lightingCode,'PBR lighting');
+    const lightingModule=await w.module(materialCode+commonCode+lightingCode,'PBR lighting');
     this.pipeline=await d.createRenderPipelineAsync({layout:'auto',vertex:{module:lightingModule,entryPoint:'vertex'},fragment:{module:lightingModule,entryPoint:'fragment',targets:[{format:w.format}]},primitive:{topology:'triangle-list'}});
     this.sampler=d.createSampler({compare:'less-equal',minFilter:'linear',magFilter:'linear',addressModeU:'clamp-to-edge',addressModeV:'clamp-to-edge'});
     this.resizeShadow(2048);
@@ -71,6 +76,8 @@ export class Lighting {
     this.data.set([s.ao?1:0,s.aoRadius,s.aoStrength,s.glassTint],60);
     this.data.set([this.world.canvas.width,this.world.canvas.height,this.aoWidth,this.aoHeight],64);
     const quality=[[2,4],[4,4],[6,6]][s.aoQuality];this.data.set([...quality,s.debugLighting,s.glassIOR],68);
+    this.data.set([s.glowStrength??4,s.frosting??.65,s.lightRig==='studio'?1:0,0],72);
+    this.data.set(studioLights(s),76);
     this.device.queue.writeBuffer(this.uniform,0,this.data);
   }
   encodeShadow(encoder,timed) {

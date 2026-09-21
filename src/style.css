@@ -11,6 +11,9 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 #gui .tp-lblv_l { width: 44%; }
 #gui .tp-lblv_v { width: 56%; }
 
-#still-preview { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #121518; z-index: 1; }
+#still-preview { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #121518; z-index: 2; }
 #still-preview[hidden] { display: none; }
-#gui { z-index: 2; }
+#gui { z-index: 3; }
+
+#render-guide { position: fixed; pointer-events: none; border: 1px solid #ffffff38; box-shadow: 0 0 0 100vmax #0007; z-index: 1; }
+#render-guide[hidden] { display: none; }

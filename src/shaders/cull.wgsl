@@ -1,10 +1,10 @@
-struct Particle { p: vec4f, v: vec4f, w: vec4f }
+struct Body { p:vec4f, q:vec4f, shape:vec4f, velocity:vec4f }
 struct Camera {
   view: mat4x4f, projection: mat4x4f, inverse: mat4x4f,
   eye: vec4f, box: vec4f, cursor: vec4f, style: vec4f,
 }
 @group(0) @binding(0) var<uniform> camera: Camera;
-@group(0) @binding(1) var<storage, read> particles: array<Particle>;
+@group(0) @binding(1) var<storage, read> particles: array<Body>;
 @group(0) @binding(2) var pyramid: texture_2d<f32>;
 @group(0) @binding(3) var<storage, read_write> visible: array<u32>;
 @group(0) @binding(4) var<storage, read_write> draw: array<atomic<u32>>;

@@ -12,6 +12,8 @@ struct Lighting {
   occlusion: vec4f, // enabled, radius in world units, strength, glass tint
   viewport: vec4f, // full width/height, AO width/height
   options: vec4f, // AO directions, steps, debug view, glass IOR
+  theme: vec4f, // emission strength, maximum glass roughness, studio rig enabled, unused
+  strips:array<StudioLight,4>,
 }
 @group(0) @binding(0) var<uniform> camera: Camera;
 @group(0) @binding(1) var<uniform> light: Lighting;

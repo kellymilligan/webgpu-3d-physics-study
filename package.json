@@ -1,19 +1,17 @@
 {
-  "name": "sphere-lab",
+  "name": "box3d-body-lab",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 5180 --strictPort",
-    "build:wasm": "node scripts/build-wasm.mjs",
-    "build": "npm run build:wasm && vite build",
+    "build:box3d": "node scripts/build-box3d.mjs",
+    "build": "vite build",
     "preview": "vite preview --host 127.0.0.1 --port 5180 --strictPort",
-    "test": "node --test scripts/seed.test.mjs scripts/export.test.mjs",
-    "test:gpu": "node scripts/test-gpu.mjs",
-    "test:culling": "node scripts/test-culling.mjs",
-    "test:lighting": "node scripts/test-lighting.mjs && node scripts/test-shadow.mjs",
-    "test:export": "node scripts/test-path-tracer.mjs && node scripts/test-export-workflow.mjs",
-    "test:print": "node scripts/test-print-size.mjs"
+    "test": "node --test scripts/export.test.mjs scripts/preferences.test.mjs",
+    "test:collisions": "node scripts/test-collisions.mjs",
+    "test:review": "node scripts/test-review.mjs",
+    "test:shapes": "node scripts/test-shapes.mjs"
   },
   "dependencies": {
     "three": "^0.185.1",

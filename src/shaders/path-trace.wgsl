@@ -8,10 +8,12 @@ struct Params {
   lightNormal:vec4f, // points from disk toward scene, radiance
   lightRight:vec4f, lightUp:vec4f,
   environment:vec4f, // strength, exposure, glass tint, unused
+  theme:vec4f, // sphere emission strength, maximum glass roughness, studio rig enabled, unused
+  strips:array<StudioLight,4>,
 }
 struct Node { lo:vec3f, a:u32, hi:vec3f, b:u32 }
 @group(0) @binding(0) var<uniform> params:Params;
-@group(0) @binding(1) var<storage,read> spheres:array<vec4f>;
+@group(0) @binding(1) var<storage,read> bodies:array<Body>;
 @group(0) @binding(2) var<storage,read> indices:array<u32>;
 @group(0) @binding(3) var<storage,read> nodes:array<Node>;
 @group(0) @binding(4) var<storage,read_write> accumulation:array<vec4f>;
@@ -38,11 +40,8 @@ fn trace(origin:vec3f,direction:vec3f,limit:f32)->Hit {
     if((node.b&0x80000000u)!=0u){
       let count=node.b&0x7fffffffu;
       for(var j=0u;j<count;j++){
-        let id=indices[node.a+j];let sphere=spheres[id];let oc=origin-sphere.xyz;
-        let b=dot(oc,direction);let perpendicular=oc-direction*b;
-        let h=sphere.w*sphere.w-dot(perpendicular,perpendicular);
-        if(h<0.){continue;}let root=sqrt(h);var t=-b-root;if(t<=.000001){t=-b+root;}
-        if(t>.000001&&t<hit.t){hit=Hit(t,id);}
+        let id=indices[node.a+j];let body=bodies[id];let shapeHit=intersectShape(origin,direction,body.p.xyz,body.q,body.shape,body.p.w);
+        if(shapeHit.t>.000001&&shapeHit.t<hit.t){hit=Hit(shapeHit.t,id);}
       }
     }else{
       let a=boxNear(origin,inverse,nodes[node.a],hit.t);let b=boxNear(origin,inverse,nodes[node.b],hit.t);
@@ -62,10 +61,27 @@ fn diskDistance(origin:vec3f,direction:vec3f)->f32 {
   return select(INF,t,dot(p,p)<=params.lightCenter.w*params.lightCenter.w);
 }
 fn emission()->vec3f {return vec3f(1.,.96,.89)*params.lightNormal.w;}
-fn environment(d:vec3f)->vec3f {return mix(vec3f(.16,.14,.11),vec3f(.57,.64,.75),d.y*.5+.5)*params.environment.x;}
+fn environment(d:vec3f)->vec3f {if(params.box.w>4.5){return vec3f(0); }return mix(vec3f(.16,.14,.11),vec3f(.57,.64,.75),d.y*.5+.5)*params.environment.x;}
 fn power(a:f32,b:f32)->f32 {let aa=a*a;return aa/max(1e-20,aa+b*b);}
 fn diskPDF(origin:vec3f,direction:vec3f,t:f32)->f32 {
   return t*t/max(1e-12,PI*params.lightCenter.w*params.lightCenter.w*abs(dot(params.lightNormal.xyz,direction)));
+}
+// Uniform selection among the four finite panels; selection probability is
+// included in both next-event sampling and the BSDF-hit MIS density.
+fn areaHit(origin:vec3f,direction:vec3f)->Hit {
+  if(params.theme.z<.5){return Hit(diskDistance(origin,direction),0u);}
+  var hit=Hit(INF,MISS);
+  for(var i=0u;i<4u;i++){let t=stripDistance(params.strips[i],origin,direction);if(t<hit.t){hit=Hit(t,i);}}
+  return hit;
+}
+fn areaPDF(origin:vec3f,direction:vec3f,t:f32,id:u32)->f32 {
+  if(params.theme.z<.5){return diskPDF(origin,direction,t);}
+  let strip=params.strips[id];
+  return .25*t*t/max(1e-12,strip.center.w*abs(dot(strip.normal.xyz,direction)));
+}
+fn areaEmission(id:u32,direction:vec3f)->vec3f {
+  if(params.theme.z<.5){return emission();}
+  let strip=params.strips[id];return select(vec3f(0),strip.radiance.xyz,dot(strip.normal.xyz,direction)<0.);
 }
 fn schlick(f0:vec3f,c:f32)->vec3f {return f0+(1.-f0)*pow(clamp(1.-c,0.,1.),5.);}
 struct BSDF { f:vec3f, pdf:f32 }
@@ -90,6 +106,21 @@ fn sampleBSDF(n:vec3f,v:vec3f,roughness:f32,metal:f32)->vec3f {
   }
   return frame*vec3f(sqrt(u)*cos(phi),sqrt(u)*sin(phi),sqrt(1.-u));
 }
+// Isotropic GGX visible-normal sampling for a rough dielectric interface.
+// Sample the microfacet normal facing the incident direction, then Fresnel-select
+// reflection/transmission. The BSDF/PDF ratio reduces to Smith G/G1 (and eta²).
+fn visibleMicroNormal(n:vec3f,v:vec3f,alpha:f32)->vec3f {
+  let frame=basis(n);let local=transpose(frame)*v;
+  let stretched=normalize(vec3f(local.xy*alpha,local.z));
+  var tangent=vec3f(1,0,0);if(stretched.z<.99999){tangent=normalize(cross(vec3f(0,0,1),stretched));}
+  let second=cross(stretched,tangent);let radius=sqrt(random());let angle=2.*PI*random();
+  let x=radius*cos(angle);let y=mix(sqrt(max(0.,1.-x*x)),radius*sin(angle),(1.+stretched.z)*.5);
+  let h=tangent*x+second*y+stretched*sqrt(max(0.,1.-x*x-y*y));
+  return frame*normalize(vec3f(alpha*h.xy,max(.000001,h.z)));
+}
+fn smithLambda(cosine:f32,alpha:f32)->f32 {
+  let c2=max(.00000001,cosine*cosine);return .5*(sqrt(1.+alpha*alpha*(1.-c2)/c2)-1.);
+}
 @compute @workgroup_size(8,8)
 fn render(@builtin(global_invocation_id) global:vec3u) {
   if(any(global.xy>=params.tile.xy)){return;}
@@ -102,43 +133,67 @@ fn render(@builtin(global_invocation_id) global:vec3u) {
   var previousPdf=0.;var previousNormal=vec3f(0);var previousOrigin=origin;var deltaEvent=true;
   var absorption=vec3f(0);
   for(var bounce=0u;bounce<params.tile.w;bounce++){
-    let disk=diskDistance(origin,direction);let hit=trace(origin,direction,disk);
+    let area=areaHit(origin,direction);let hit=trace(origin,direction,area.t);
     if(hit.id==MISS){
-      if(disk!=INF){let weight=select(power(previousPdf,.5*diskPDF(previousOrigin,direction,disk)),1.,deltaEvent);radiance+=throughput*emission()*weight;}
+      if(area.t!=INF){let weight=select(power(previousPdf,.5*areaPDF(previousOrigin,direction,area.t,area.id)),1.,deltaEvent);radiance+=throughput*exp(-absorption*area.t)*areaEmission(area.id,direction)*weight;}
       else{let envPDF=select(0.,.5/(2.*PI),dot(previousNormal,direction)>0.);let weight=select(power(previousPdf,envPDF),1.,deltaEvent);radiance+=throughput*environment(direction)*weight;}
       break;
     }
     throughput*=exp(-absorption*hit.t);
-    let point=origin+direction*hit.t;var outward=vec3f(0,1,0);var radius=1.;var kind=1u;var base=vec3f(.14,.155,.17);var roughness=.85;var metallic=0.;
+    let point=origin+direction*hit.t;var outward=vec3f(0,1,0);var radius=1.;var kind=1u;var base=select(vec3f(.14,.155,.17),vec3f(.004),params.box.w>4.5);var roughness=.85;var metallic=0.;
     if(hit.id!=FLOOR){
-      let sphere=spheres[hit.id];radius=sphere.w;outward=normalize(point-sphere.xyz);kind=materialKind(hit.id,params.material.x);base=paletteColor(hit.id,params.box.w);
+      let body=bodies[hit.id];radius=body.p.w;let local=qInverseRotate(body.q,point-body.p.xyz);outward=qRotate(body.q,shapeNormal(local,body.shape,max(.00002,radius*.00025)));kind=materialKind(hit.id,params.material.x);base=paletteColor(hit.id,params.box.w);
       roughness=params.material.y;metallic=params.material.z;
+      if(kind==8u){roughness=.16;metallic=0.;}
       if(kind==1u){roughness=.82;metallic=0.;}if(kind==2u){base=vec3f(.93,.94,.96);roughness=.055;metallic=1.;}
     }
-    let entering=dot(direction,outward)<0.;let n=select(-outward,outward,entering);let v=-direction;let epsilon=max(.000002,radius*.00015);
+    if(kind==4u){
+      // Sphere emitters are sampled by continuing BSDF paths, not by the panel/
+      // environment NEE strategy, so their emission receives no competing MIS PDF.
+      radiance+=throughput*warmGlow()*params.theme.x;roughness=.82;metallic=0.;
+    }
+    let entering=dot(direction,outward)<0.;let n=select(-outward,outward,entering);let v=-direction;
+    // Keep offsets resolvable at world scale without skipping thin geometry.
+    let epsilon=max(.000004,max(abs(point.x),max(abs(point.y),abs(point.z)))*.000001);
     previousOrigin=point;previousNormal=n;
-    if(kind==3u){
-      let eta=select(1./params.material.w,params.material.w,entering);let f=dielectric(clamp(dot(n,v),0.,1.),eta);
-      if(random()<f){direction=reflect(direction,n);}else{
-        direction=normalize(refract(direction,n,1./eta));throughput/=eta*eta;
+    if(glassKind(kind)){
+      let frost=glassFrost(kind,params.theme.y);let alpha=frost*frost;
+      var micro=n;if(frost>.001){micro=visibleMicroNormal(n,v,alpha);}
+      let eta=select(1./params.material.w,params.material.w,entering);let f=dielectric(clamp(dot(micro,v),0.,1.),eta);
+      if(random()<f){
+        direction=reflect(direction,micro);if(dot(direction,n)<=0.){break;}
+      }else{
+        direction=refract(direction,micro,1./eta);
+        if(dot(direction,direction)<.000001||dot(direction,n)>=0.){break;}
+        direction=normalize(direction);throughput/=eta*eta;
         if(entering){absorption=-log(mix(vec3f(1),max(base,vec3f(.05)),params.environment.z))/max(.001,2.*radius);}
         else{absorption=vec3f(0);}
       }
+      if(frost>.001){let lv=smithLambda(dot(n,v),alpha);let ll=smithLambda(dot(n,direction),alpha);throughput*=(1.+lv)/(1.+lv+ll);}
+      // No next-event estimator is used at dielectric vertices (including rough
+      // glass), so subsequent light hits must retain their full BSDF weight.
       deltaEvent=true;previousPdf=0.;
     }else{
       // Next-event estimation: choose an area-light sample or a cosine-independent
       // hemisphere environment sample, then combine with BSDF paths using MIS.
       var lightDirection=vec3f(0);var lightDistance=INF;var incoming=vec3f(0);var lightPdf=0.;
       if(random()<.5){
-        let r=params.lightCenter.w*sqrt(random());let phi=2.*PI*random();
-        let lightPoint=params.lightCenter.xyz+params.lightRight.xyz*(r*cos(phi))+params.lightUp.xyz*(r*sin(phi));
+        var lightPoint=vec3f(0);var lightID=0u;
+        if(params.theme.z>.5){
+          lightID=min(3u,u32(random()*4.));let strip=params.strips[lightID];
+          lightPoint=strip.center.xyz+strip.right.xyz*((random()*2.-1.)*strip.right.w)+strip.up.xyz*((random()*2.-1.)*strip.up.w);
+        }else{
+          let r=params.lightCenter.w*sqrt(random());let phi=2.*PI*random();
+          lightPoint=params.lightCenter.xyz+params.lightRight.xyz*(r*cos(phi))+params.lightUp.xyz*(r*sin(phi));
+        }
         let diff=lightPoint-point;lightDistance=length(diff);lightDirection=diff/lightDistance;
-        lightPdf=.5*diskPDF(point,lightDirection,lightDistance);incoming=emission();
+        lightPdf=.5*areaPDF(point,lightDirection,lightDistance,lightID);incoming=areaEmission(lightID,lightDirection);
+        if(areaHit(point+n*epsilon,lightDirection).t<lightDistance-epsilon*2.){incoming=vec3f(0);}
       }else{
         let z=random();let phi=2.*PI*random();lightDirection=basis(n)*vec3f(sqrt(1.-z*z)*cos(phi),sqrt(1.-z*z)*sin(phi),z);
         lightPdf=.5/(2.*PI);incoming=environment(lightDirection);
-        // The disk is an opaque emitter, so environment paths cannot pass through it.
-        if(diskDistance(point+n*epsilon,lightDirection)!=INF){incoming=vec3f(0);}
+        // Panels are opaque, including their non-emitting backs.
+        if(areaHit(point+n*epsilon,lightDirection).t!=INF){incoming=vec3f(0);}
       }
       let bsdf=evalBSDF(n,v,lightDirection,base,roughness,metallic);
       if(bsdf.pdf>0.&&lightPdf>0.&&any(incoming>vec3f(0))){

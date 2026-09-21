@@ -37,3 +37,12 @@ export function printDimensions(longInches,dpi,aspect){
   const long=Math.round(longInches*dpi);if(!Number.isInteger(long)||long<16||long>24000)throw new Error('Choose a long edge between 16 and 24,000 pixels');
   return {width:aspect>=1?long:Math.max(1,Math.round(long*aspect)),height:aspect>=1?Math.max(1,Math.round(long/aspect)):long};
 }
+
+export function renderDimensions(options,aspect){
+  return options.preset==='studio5k'?{width:5120,height:2880}:printDimensions(options.longInches,options.dpi,aspect);
+}
+// Center crop in viewport pixels; preserves camera perspective for fixed-aspect output.
+export function cropFrame(width,height,aspect){
+  const w=Math.min(width,height*aspect),h=w/aspect;
+  return {x:(width-w)/2,y:(height-h)/2,width:w,height:h};
+}

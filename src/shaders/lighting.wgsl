@@ -54,19 +54,49 @@ fn aoAt(pixel:vec2i,p:vec3f,n:vec3f)->f32 {
 fn schlickGlass(c:f32)->f32 {let f0=pow((light.options.w-1.)/(light.options.w+1.),2.);return f0+(1.-f0)*pow(1.-c,5.);}
 fn fresnel(f0:vec3f,cosine:f32)->vec3f {return f0+(1.-f0)*pow(1.-cosine,5.);}
 fn srgb(c:vec3f)->vec3f {return select(c*12.92,1.055*pow(c,vec3f(1./2.4))-.055,c>vec3f(.0031308));}
+struct StripShading { diffuse:vec3f, specular:vec3f }
+fn studioShading(world:vec3f,n:vec3f,v:vec3f,base:vec3f,f0:vec3f,roughness:f32,metallic:f32,shadow:f32,ao:f32)->StripShading {
+  var diffuse=vec3f(0);var specular=vec3f(0);let reflection=reflect(-v,n);
+  let f=fresnel(f0,max(0.,dot(n,v)));
+  for(var i=0u;i<4u;i++){
+    let strip=light.strips[i];let visibility=select(ao,shadow,i==0u);
+    var irradiance=0.;
+    for(var j=0u;j<4u;j++){
+      let offset=vec2f(select(-.57735,.57735,(j&1u)!=0u),select(-.57735,.57735,(j&2u)!=0u));
+      let diff=strip.center.xyz+strip.right.xyz*(offset.x*strip.right.w)+strip.up.xyz*(offset.y*strip.up.w)-world;
+      let distance2=dot(diff,diff);let l=diff*inverseSqrt(distance2);
+      irradiance+=max(0.,dot(n,l))*max(0.,dot(strip.normal.xyz,-l))*strip.center.w/(4.*distance2);
+    }
+    diffuse+=(1.-f)*(1.-metallic)*base/3.14159265*strip.radiance.xyz*irradiance*visibility;
+    let denominator=dot(reflection,strip.normal.xyz);
+    if(denominator<-.00001){
+      let t=dot(strip.center.xyz-world,strip.normal.xyz)/denominator;
+      if(t>0.){
+        let p=world+reflection*t-strip.center.xyz;
+        let uv=vec2f(dot(p,strip.right.xyz),dot(p,strip.up.xyz));let extent=vec2f(strip.right.w,strip.up.w);
+        let blur=max(.015,t*roughness*roughness*1.5);
+        let coverage=(atan((extent-uv)/blur)-atan((-extent-uv)/blur))/3.14159265;
+        specular+=strip.radiance.xyz*f*coverage.x*coverage.y*(1.-roughness*.35)*visibility;
+      }
+    }
+  }
+  return StripShading(diffuse,specular);
+}
 @fragment fn fragment(@builtin(position) screen:vec4f)->@location(0) vec4f {
   let pixel=vec2i(screen.xy);let depth=textureLoad(geometryDepth,pixel,0);
-  if(depth>=1.){return vec4f(.073,.082,.095,1);}
+  let blackStudio=camera.style.x>4.5;
+  if(depth>=1.){return vec4f(select(vec3f(.073,.082,.095),vec3f(0),blackStudio),1);}
   let p=viewPosition(screen.xy,depth);let nv=normalize(textureLoad(geometryNormal,pixel,0).xyz);
   let world=(camera.inverse*vec4f(p,1)).xyz;let n=normalize((camera.inverse*vec4f(nv,0)).xyz);
   let albedo=textureLoad(geometryAlbedo,pixel,0);var base=albedo.rgb;
-  let kind=i32(round(albedo.a*5.))-1;let sphere=kind>=0;
+  let kind=i32(round(albedo.a*10.))-1;let sphere=kind>=0;
   var roughness=select(.85,light.ambient.y,sphere);var metallic=select(0.,light.ambient.z,sphere);
+  if(kind==8){roughness=.16;metallic=0.;}
   if(kind==1){roughness=.82;metallic=0.;}if(kind==2){base=vec3f(.93,.94,.96);roughness=.055;metallic=1.;}
-  if(kind==3){roughness=.06;metallic=0.;}
+  if(glassKind(u32(max(0,kind)))){roughness=max(.06,glassFrost(u32(kind),light.theme.y));metallic=0.;}
   let v=normalize(camera.eye.xyz-world);let l=light.direction.xyz;let h=normalize(v+l);
   let noV=max(.001,dot(n,v));let noL=max(0.,dot(n,l));let noH=max(0.,dot(n,h));let voH=max(0.,dot(v,h));
-  var f0=mix(vec3f(.04),base,metallic);if(kind==3){f0=vec3f(schlickGlass(1.));}let f=fresnel(f0,voH);
+  var f0=mix(vec3f(.04),base,metallic);if(glassKind(u32(max(0,kind)))){f0=vec3f(schlickGlass(1.));}let f=fresnel(f0,voH);
   let alpha=roughness*roughness;let a2=alpha*alpha;
   let denominator=noH*noH*(a2-1.)+1.;
   let distribution=a2/max(.0000001,3.14159265*denominator*denominator);
@@ -78,19 +108,29 @@ fn srgb(c:vec3f)->vec3f {return select(c*12.92,1.055*pow(c,vec3f(1./2.4))-.055,c
   let direct=(diffuse+specular)*vec3f(1.,.96,.89)*light.direction.w*noL*shadow;
   let ao=aoAt(pixel,p,nv);
   // A broad analytic studio environment, not local bounce or scene reflections.
-  let ambientColor=mix(vec3f(.19,.17,.14),vec3f(.57,.64,.75),n.y*.5+.5);
+  let ambientColor=select(mix(vec3f(.19,.17,.14),vec3f(.57,.64,.75),n.y*.5+.5),vec3f(0),blackStudio);
   let environmentDirection=normalize(mix(reflect(-v,n),n,roughness*roughness));
-  let environment=mix(vec3f(.16,.14,.11),vec3f(.57,.64,.75),environmentDirection.y*.5+.5);
+  let environment=select(mix(vec3f(.16,.14,.11),vec3f(.57,.64,.75),environmentDirection.y*.5+.5),vec3f(0),blackStudio);
   let ambientF=fresnel(f0,noV);
   let indirect=((1.-ambientF)*(1.-metallic)*base*ambientColor+environment*ambientF*(1.-roughness*.45))*light.ambient.x*ao;
-  var color=(direct+indirect)*light.ambient.w;
-  if(kind==3){
+  var studio=StripShading(vec3f(0),vec3f(0));
+  if(light.theme.z>.5){studio=studioShading(world,n,v,base,f0,roughness,metallic,shadow,ao);}
+  var color=(select(direct,studio.diffuse+studio.specular,light.theme.z>.5)+indirect)*light.ambient.w;
+  if(glassKind(u32(max(0,kind)))){
     // Fast glass appearance for composition; the still renderer traces actual
     // transmission through the complete scene, including hidden spheres.
     let fGlass=schlickGlass(noV);
-    let transmitted=mix(vec3f(.12,.14,.16),vec3f(.55,.63,.72),clamp(-n.y*.5+.5,0.,1.))*mix(vec3f(1),base,light.occlusion.w);
-    color=(environment*fGlass+transmitted*(1.-fGlass)*light.ambient.x+specular*light.direction.w*noL*shadow)*light.ambient.w;
+    let transmitted=mix(vec3f(.12,.14,.16),vec3f(.55,.63,.72),mix(clamp(-n.y*.5+.5,0.,1.),.7,roughness))*mix(vec3f(1),base,light.occlusion.w);
+    color=(environment*fGlass+transmitted*(1.-fGlass)*light.ambient.x+select(specular*light.direction.w*noL*shadow,studio.specular,light.theme.z>.5))*light.ambient.w;
   }
+  if(blackStudio&&glassKind(u32(max(0,kind)))){
+    // Neutral frosted transmission approximation; the still integrator traces
+    // actual transmission and local emitter lighting against the black world.
+    let reflection=select(specular*light.direction.w*noL*shadow,studio.specular,light.theme.z>.5);
+    let fill=select(diffuse*vec3f(1.,.96,.89)*light.direction.w*noL*shadow,studio.diffuse,light.theme.z>.5);
+    color=(reflection+fill*roughness*.35)*light.ambient.w;
+  }
+  if(kind==4){color=warmGlow()*light.theme.x*light.ambient.w;}
   color=clamp((color*(2.51*color+.03))/(color*(2.43*color+.59)+.14),vec3f(0),vec3f(1));
   if(light.options.z>.5&&light.options.z<1.5){return vec4f(vec3f(ao),1);}
   if(light.options.z>1.5&&light.options.z<2.5){return vec4f(vec3f(shadow),1);}

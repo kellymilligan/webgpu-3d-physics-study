@@ -1,8 +1,11 @@
 import {Matrix4,Vector3} from 'three';
 import materialCode from '../shaders/materials.wgsl?raw';
 import pathCode from '../shaders/path-trace.wgsl?raw';
+import studioCode from '../shaders/studio.wgsl?raw';
+import shapeCode from '../shaders/shapes.wgsl?raw';
+import {studioLights} from '../studio.js';
 import {PNGWriter} from './png.js';
-export function packMaterials(s){return s.materialMix?1|(Math.round(s.glassShare*100)<<1)|(Math.round(s.chromeShare*100)<<8):0;}
+export function packMaterials(s){return s.color===5?131073:s.color===4?65537:s.materialMix?1|(Math.round(s.glassShare*100)<<1)|(Math.round(s.chromeShare*100)<<8):0;}
 function check(signal){if(signal?.aborted)throw new DOMException('Render cancelled','AbortError');}
 function build(state,signal){return new Promise((resolve,reject)=>{
   const worker=new Worker(new URL('./bvh-worker.js',import.meta.url),{type:'module'});
@@ -15,7 +18,7 @@ function build(state,signal){return new Promise((resolve,reject)=>{
 function display(value,exposure){const x=Math.max(0,value*exposure);const mapped=Math.max(0,Math.min(1,(x*(2.51*x+.03))/(x*(2.43*x+.59)+.14)));return mapped<=.0031308?mapped*12.92:1.055*Math.pow(mapped,1/2.4)-.055;}
 export class PathTracer {
   constructor(world){this.world=world;this.device=world.device;}
-  async initialize(){if(this.pipeline)return;const module=await this.world.module(materialCode+pathCode,'path tracer');this.pipeline=await this.device.createComputePipelineAsync({layout:'auto',compute:{module,entryPoint:'render'}});}
+  async initialize(){if(this.pipeline)return;const module=await this.world.module(materialCode+studioCode+shapeCode+pathCode,'path tracer');this.pipeline=await this.device.createComputePipelineAsync({layout:'auto',compute:{module,entryPoint:'render'}});}
   async render({state,camera,settings:s,options,sink,onProgress=()=>{},onTile=()=>{},signal}){
     const {width,height,samples,bounces,dpi}=options,tileSize=options.tileSize??128;
     if(!Number.isInteger(width)||!Number.isInteger(height)||width<1||height<1||Math.max(width,height)>24000||!Number.isInteger(samples)||samples<1||samples>16384||!Number.isInteger(bounces)||bounces<2||bounces>64||!Number.isInteger(tileSize)||tileSize<8||tileSize>256)throw new Error('Invalid render dimensions or quality');
@@ -29,15 +32,15 @@ export class PathTracer {
       const upload=(array,label)=>{if(array.byteLength>d.limits.maxStorageBufferBindingSize)throw new Error(`${label} exceeds this GPU's storage binding limit`);const b=buffer(array.byteLength,GPUBufferUsage.STORAGE|GPUBufferUsage.COPY_DST,label);d.queue.writeBuffer(b,0,array);return b;};
       let positions,indices,nodes,uniform,accumulation,read;
       try{
-        positions=upload(scene.positions,'frozen spheres');indices=upload(scene.indices,'ray sphere IDs');nodes=upload(scene.nodes,'sphere BVH');
-        uniform=buffer(272,GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST,'path parameters');
+        positions=upload(scene.positions,'frozen bodies');indices=upload(scene.indices,'ray body IDs');nodes=upload(scene.nodes,'body BVH');
+        uniform=buffer(608,GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST,'path parameters');
         accumulation=buffer(tileSize*tileSize*16,GPUBufferUsage.STORAGE|GPUBufferUsage.COPY_SRC,'HDR tile');
         read=buffer(tileSize*tileSize*16,GPUBufferUsage.MAP_READ|GPUBufferUsage.COPY_DST,'tile readback');
-      }finally{const allocationError=await d.popErrorScope();if(allocationError)throw new Error('Not enough GPU memory for this still. Choose fewer spheres.');}
+      }finally{const allocationError=await d.popErrorScope();if(allocationError)throw new Error('Not enough GPU memory for this still. Choose fewer bodies.');}
       this.lastScene={count:scene.count,nodes:scene.nodeCount,bytes:scene.positions.byteLength+scene.indices.byteLength+scene.nodes.byteLength};
       scene=null; // Uploads copy their source; release CPU geometry during long renders.
       const group=d.createBindGroup({layout:this.pipeline.getBindGroupLayout(0),entries:[uniform,positions,indices,nodes,accumulation].map((b,binding)=>({binding,resource:{buffer:b}}))});
-      const data=new ArrayBuffer(272),f=new Float32Array(data),u=new Uint32Array(data);
+      const data=new ArrayBuffer(608),f=new Float32Array(data),u=new Uint32Array(data);
       f.set(new Matrix4().fromArray(camera,16).invert().elements,0);f.set(camera.subarray(32,48),16);u.set([width,height,0,0],32);
       f.set([s.width/2,s.height,s.depth/2,s.color],40);f.set([packMaterials(s),s.roughness,s.metallic,s.glassIOR],44);
       const az=s.lightAzimuth*Math.PI/180,el=s.lightElevation*Math.PI/180;
@@ -47,6 +50,8 @@ export class PathTracer {
       const radius=s.softboxSize/2;
       f.set([...center.toArray(),radius],48);f.set([...normal.toArray(),s.lightIntensity*distance*distance/(Math.PI*radius*radius)],52);
       f.set([...right.toArray(),0],56);f.set([...up.toArray(),0],60);f.set([s.ambientStrength,s.exposure,s.glassTint,0],64);
+      f.set([s.glowStrength??4,s.frosting??.65,s.lightRig==='studio'?1:0,0],68);
+      f.set(studioLights(s),72);
       png=await PNGWriter.create(width,height,dpi,sink);
       let completed=0,lastProgress=0;const total=width*height*samples;
       for(let y=0;y<height;y+=tileSize){
